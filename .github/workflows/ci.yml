@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -21,8 +21,26 @@ jobs:
     name: Verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.16
+        env:
+          POSTGRES_DB: ksv_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ksv_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     permissions:
       contents: read
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ksv_test
+      MIGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ksv_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ksv_test
     steps:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,6 +59,18 @@ jobs:
 
       - name: Run project checks
         run: npm run check
+
+      - name: Install backend dependencies
+        run: npm ci --prefix services/api --ignore-scripts
+
+      - name: Audit backend dependencies
+        run: npm audit --prefix services/api --audit-level=high
+
+      - name: Apply PostgreSQL migrations
+        run: npm run migrate --prefix services/api
+
+      - name: Check backend and PostgreSQL isolation
+        run: npm run check --prefix services/api
 
   attest:
     name: Build, generate SBOM, and attest

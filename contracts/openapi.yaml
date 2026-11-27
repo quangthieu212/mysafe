@@ -1,0 +1,2431 @@
+openapi: 3.0.3
+info:
+  title: Két Sắt Việt API
+  version: 2.0.0-draft
+  description: 'Hợp đồng API dự thảo v2. Xác thực dùng OPAQUE (RFC 9807) với đầu vào dẫn xuất từ mật khẩu chính
+    + Secret Key; máy chủ chỉ thấy bản mã. Mọi thay đổi giao thức xác thực/mật mã cần được chuyên gia mật mã độc
+    lập duyệt.
+
+    Quy ước: JSON UTF-8; lỗi theo application/problem+json với message tiếng Việt; ghi dữ liệu dùng Idempotency-Key;
+    cập nhật/xóa mục dùng If-Match (revision) và trả 409 kèm bản hiện hành.'
+servers:
+- url: /api/v2
+  description: Két Sắt Việt v2 API; relative URL for local and deployed hosts
+tags:
+- name: Health
+- name: Auth
+- name: Account
+- name: Devices
+- name: Vaults
+- name: Sync
+- name: Items
+- name: Recovery
+- name: Attachments
+security:
+- bearerAuth: []
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Check whether the API process is alive
+      security: []
+      responses:
+        '200':
+          description: API process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Check whether required backend dependencies are ready
+      security: []
+      responses:
+        '200':
+          description: API and PostgreSQL are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, dependencies]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+                  dependencies:
+                    type: object
+                    additionalProperties: false
+                    required: [postgres]
+                    properties:
+                      postgres:
+                        type: string
+                        enum: [ok]
+        '503':
+          description: One or more required dependencies are unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+  /auth/email-challenges:
+    post:
+      tags:
+      - Auth
+      operationId: createEmailChallenge
+      summary: Gửi mã OTP 8 chữ số qua email
+      description: 'Luôn trả 202. Giới hạn: 3 mã/giờ/email, 10 mã/giờ/IP. Email không chứa liên kết bấm được và
+        nhắc không chia sẻ mã.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailChallengeRequest'
+      responses:
+        '202':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailChallengeAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/email-challenges/verify:
+    post:
+      tags:
+      - Auth
+      operationId: verifyEmailChallenge
+      summary: Xác minh OTP, nhận emailProof
+      description: Tối đa 5 lần thử mỗi mã; mã dùng một lần, hiệu lực 10 phút.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailChallengeVerifyRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailProof'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/register/start:
+    post:
+      tags:
+      - Auth
+      operationId: registerStart
+      summary: Bắt đầu đăng ký OPAQUE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterStartRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/register/finish:
+    post:
+      tags:
+      - Auth
+      operationId: registerFinish
+      summary: 'Hoàn tất đăng ký: bản ghi OPAQUE, khóa bọc, két đầu tiên, thiết bị'
+      description: Máy chủ KHÔNG nhận mật khẩu chính, Secret Key, Recovery Key hay rootKey ở dạng rõ.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterFinishRequest'
+      responses:
+        '201':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/login/start:
+    post:
+      tags:
+      - Auth
+      operationId: loginStart
+      summary: Bắt đầu đăng nhập OPAQUE
+      description: Email không tồn tại vẫn nhận phản hồi giả xác định (RFC 9807 mục fake records) để chống dò tài
+        khoản.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginStartRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/login/finish:
+    post:
+      tags:
+      - Auth
+      operationId: loginFinish
+      summary: Hoàn tất OPAQUE; trả bước tiếp theo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginFinishRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/mfa/verify:
+    post:
+      tags:
+      - Auth
+      operationId: mfaVerify
+      summary: Xác minh yếu tố thứ hai
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaVerifyRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /auth/refresh:
+    post:
+      tags:
+      - Auth
+      operationId: refreshSession
+      summary: Xoay refresh token (có phát hiện tái sử dụng)
+      description: Yêu cầu có header X-Device-Signature (ECDSA P-256 trên method‖path‖timestamp‖SHA-256(body));
+        sai chữ ký hoặc refresh token cũ => thu hồi cả họ phiên.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - refreshCookie: []
+      - bearerAuth: []
+  /auth/logout:
+    post:
+      tags:
+      - Auth
+      operationId: logout
+      summary: Đăng xuất phiên hiện tại
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /account/keys:
+    get:
+      tags:
+      - Account
+      operationId: getKeyMaterial
+      summary: Lấy KDF params và wrappedRootKey
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyMaterial'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /account/password/start:
+    post:
+      tags:
+      - Account
+      operationId: passwordChangeStart
+      summary: Bắt đầu đổi mật khẩu chính (OPAQUE đăng ký lại)
+      description: Yêu cầu auth_time ≤ 5 phút; nếu cũ hơn trả 403 để client đăng nhập lại.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationStartRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /account/password/finish:
+    post:
+      tags:
+      - Account
+      operationId: passwordChangeFinish
+      summary: 'Hoàn tất đổi mật khẩu: rewrap rootKey'
+      description: Thu hồi mọi phiên và thiết bị khác; gửi thông báo email và tới thiết bị còn lại.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeFinish'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /account/mfa:
+    get:
+      tags:
+      - Account
+      operationId: listMfa
+      summary: Liệt kê phương thức MFA
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MfaMethod'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Account
+      operationId: enrollMfa
+      summary: Bắt đầu đăng ký MFA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaEnrollRequest'
+      responses:
+        '201':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaEnrollResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /account/mfa/{mfaId}/confirm:
+    post:
+      tags:
+      - Account
+      operationId: confirmMfa
+      summary: Xác nhận đăng ký MFA
+      description: Lần xác nhận đầu tiên trả mã dự phòng (hiển thị một lần).
+      parameters:
+      - $ref: '#/components/parameters/MfaId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaConfirmRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupCodes'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /account/mfa/{mfaId}:
+    delete:
+      tags:
+      - Account
+      operationId: deleteMfa
+      summary: Xóa phương thức MFA
+      parameters:
+      - $ref: '#/components/parameters/MfaId'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /account/deletion:
+    post:
+      tags:
+      - Account
+      operationId: requestDeletion
+      summary: Yêu cầu xóa tài khoản (hiệu lực sau 7 ngày)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeletionRequest'
+      responses:
+        '202':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionScheduled'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+    delete:
+      tags:
+      - Account
+      operationId: cancelDeletion
+      summary: Hủy yêu cầu xóa
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /security/events:
+    get:
+      tags:
+      - Account
+      operationId: listSecurityEvents
+      summary: Nhật ký bảo mật của chính người dùng
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityEventPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /devices:
+    get:
+      tags:
+      - Devices
+      operationId: listDevices
+      summary: Danh sách thiết bị
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /devices/{deviceId}/revoke:
+    post:
+      tags:
+      - Devices
+      operationId: revokeDevice
+      summary: Thu hồi thiết bị và mọi phiên của nó
+      description: Không thu hồi được dữ liệu đã tải xuống thiết bị đó; UI phải nói rõ và đề nghị xoay khóa két
+        khi nghi ngờ bị chiếm.
+      parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /devices/approvals:
+    post:
+      tags:
+      - Devices
+      operationId: createDeviceApproval
+      summary: Thiết bị mới yêu cầu phê duyệt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceApprovalCreate'
+      responses:
+        '201':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - pendingBearer: []
+  /devices/approvals/{approvalId}:
+    get:
+      tags:
+      - Devices
+      operationId: getDeviceApproval
+      summary: Xem trạng thái/nội dung phê duyệt
+      description: Thiết bị tin cậy gọi để lấy khóa công khai của thiết bị mới và đối chiếu với mã QR trước khi
+        ký. Thiết bị mới gọi bằng pendingBearer.
+      parameters:
+      - $ref: '#/components/parameters/ApprovalId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceApproval'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /devices/approvals/{approvalId}/decision:
+    post:
+      tags:
+      - Devices
+      operationId: decideDeviceApproval
+      summary: Thiết bị tin cậy phê duyệt hoặc từ chối
+      description: Khi approve phải có approverSignature và sealedSecretKey. Phê duyệt kiểu delay chỉ hoàn tất sau
+        notBefore và có thể bị hủy từ thiết bị tin cậy.
+      parameters:
+      - $ref: '#/components/parameters/ApprovalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecision'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /sessions:
+    get:
+      tags:
+      - Devices
+      operationId: listSessions
+      summary: Danh sách phiên
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /sessions/{sessionId}:
+    delete:
+      tags:
+      - Devices
+      operationId: revokeSession
+      summary: Thu hồi một phiên
+      parameters:
+      - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /vaults:
+    get:
+      tags:
+      - Vaults
+      operationId: listVaults
+      summary: Liệt kê két của người dùng
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vault'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /vaults/{vaultId}:
+    get:
+      tags:
+      - Vaults
+      operationId: getVault
+      summary: Lấy két
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vault'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /vaults/{vaultId}/changes:
+    get:
+      tags:
+      - Sync
+      operationId: listChanges
+      summary: Luồng thay đổi bản mã theo changeSeq
+      description: Gồm cả tombstone. Client lưu changeSeq cao nhất đã thấy và coi việc nó giảm là dấu hiệu rollback.
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangesPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /vaults/{vaultId}/items:
+    post:
+      tags:
+      - Items
+      operationId: createItem
+      summary: Tạo mục mã hóa
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemWrite'
+      responses:
+        '201':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /vaults/{vaultId}/items/{itemId}:
+    get:
+      tags:
+      - Items
+      operationId: getItem
+      summary: Lấy bản mã của mục
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+    put:
+      tags:
+      - Items
+      operationId: updateItem
+      summary: Cập nhật có kiểm tra revision (CAS)
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItemWrite'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+    delete:
+      tags:
+      - Items
+      operationId: deleteItem
+      summary: Xóa mềm (tombstone) có kiểm tra revision
+      parameters:
+      - $ref: '#/components/parameters/VaultId'
+      - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItemEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /recovery/status:
+    get:
+      tags:
+      - Recovery
+      operationId: getRecoveryStatus
+      summary: Trạng thái bộ khôi phục (không lộ bí mật)
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+      - bearerAuth: []
+  /recovery/kit:
+    put:
+      tags:
+      - Recovery
+      operationId: putRecoveryKit
+      summary: Tải lên bản rootKey bọc bởi Recovery Key mới
+      description: Thay bộ khôi phục cũ; yêu cầu auth_time ≤ 5 phút.
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitUpload'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /recovery/sessions:
+    post:
+      tags:
+      - Recovery
+      operationId: createRecoverySession
+      summary: Bắt đầu khôi phục (có thời gian chờ)
+      description: Cần emailProof (+ mfaProof nếu có MFA). Chờ 24 giờ (master_password) hoặc 72 giờ (account_reset,
+        mfa_reset). Mọi thiết bị và email nhận thông báo và có thể hủy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoverySessionCreate'
+      responses:
+        '202':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoverySession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security: []
+  /recovery/sessions/{recoverySessionId}:
+    get:
+      tags:
+      - Recovery
+      operationId: getRecoverySession
+      summary: Xem trạng thái phiên khôi phục
+      parameters:
+      - $ref: '#/components/parameters/RecoverySessionId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoverySession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - pendingBearer: []
+  /recovery/sessions/{recoverySessionId}/cancel:
+    post:
+      tags:
+      - Recovery
+      operationId: cancelRecoverySession
+      summary: Hủy phiên khôi phục (từ thiết bị tin cậy)
+      parameters:
+      - $ref: '#/components/parameters/RecoverySessionId'
+      responses:
+        '204':
+          description: Thành công, không có nội dung
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /recovery/sessions/{recoverySessionId}/registration/start:
+    post:
+      tags:
+      - Recovery
+      operationId: recoveryRegistrationStart
+      summary: Bắt đầu đặt mật khẩu chính mới
+      parameters:
+      - $ref: '#/components/parameters/RecoverySessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationStartRequest'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - pendingBearer: []
+  /recovery/sessions/{recoverySessionId}/complete:
+    post:
+      tags:
+      - Recovery
+      operationId: completeRecoverySession
+      summary: Hoàn tất khôi phục
+      description: Với account_reset, két cũ bị xóa mềm 30 ngày rồi xóa hẳn; dữ liệu cũ không thể giải mã.
+      parameters:
+      - $ref: '#/components/parameters/RecoverySessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryComplete'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+      - pendingBearer: []
+  /attachments:
+    post:
+      tags:
+      - Attachments
+      operationId: initAttachment
+      summary: Khởi tạo tệp đính kèm, nhận URL tải lên ngắn hạn
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentInit'
+      responses:
+        '201':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentIntent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+  /attachments/{attachmentId}/complete:
+    post:
+      tags:
+      - Attachments
+      operationId: completeAttachment
+      summary: Xác nhận đã tải lên
+      parameters:
+      - $ref: '#/components/parameters/AttachmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentComplete'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentMeta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+      - bearerAuth: []
+  /attachments/{attachmentId}:
+    get:
+      tags:
+      - Attachments
+      operationId: getAttachment
+      summary: Metadata tệp (bản mã)
+      parameters:
+      - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+      - bearerAuth: []
+  /attachments/{attachmentId}/download-intent:
+    post:
+      tags:
+      - Attachments
+      operationId: downloadAttachment
+      summary: URL tải xuống bản mã ngắn hạn
+      parameters:
+      - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '200':
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentIntent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooMany'
+      security:
+      - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access token 10 phút, phạm vi full
+    pendingBearer:
+      type: http
+      scheme: bearer
+      description: Token phạm vi hẹp (device_approval hoặc recovery)
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-ksv_rt
+      description: 'Web: HttpOnly; Secure; SameSite=Strict; Path=/'
+  parameters:
+    VaultId:
+      name: vaultId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ApprovalId:
+      name: approvalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RecoverySessionId:
+      name: recoverySessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MfaId:
+      name: mfaId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 100
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID/chuỗi ngẫu nhiên 16–128 ký tự; trùng khóa + cùng nội dung => trả lại kết quả cũ; khác nội
+        dung => 422
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._~-]{16,128}$'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Revision hiện tại của mục mà client đã đọc (số nguyên). Lệch => 409 kèm currentItem.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: Dữ liệu không hợp lệ
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Unauthorized:
+      description: Chưa xác thực hoặc phiên hết hạn
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Forbidden:
+      description: Không đủ quyền hoặc cần xác thực lại gần đây
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    NotFound:
+      description: Không tồn tại (cũng dùng khi không sở hữu, để không lộ sự tồn tại)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Conflict:
+      description: Xung đột revision; kèm bản hiện hành để client giải mã và hòa giải
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/RevisionConflict'
+    Unprocessable:
+      description: Idempotency-Key bị tái sử dụng với nội dung khác
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    TooLarge:
+      description: Vượt giới hạn kích thước
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    TooMany:
+      description: Vượt giới hạn tần suất
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: giây
+  schemas:
+    ProblemDetails:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          description: Mã lỗi máy đọc được, ví dụ AUTH_RATE_LIMITED
+        message:
+          type: string
+          description: Thông báo tiếng Việt cho người dùng; không chứa dữ liệu nhạy cảm
+        requestId:
+          type: string
+      required:
+      - code
+      - message
+      - requestId
+    KdfParams:
+      type: object
+      additionalProperties: false
+      properties:
+        alg:
+          type: string
+          enum:
+          - argon2id
+        memoryKiB:
+          type: integer
+          minimum: 19456
+        iterations:
+          type: integer
+          minimum: 1
+        parallelism:
+          type: integer
+          minimum: 1
+        saltB64:
+          type: string
+          description: base64url. 16 byte ngẫu nhiên theo tài khoản
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - alg
+      - memoryKiB
+      - iterations
+      - parallelism
+      - saltB64
+      - version
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        platform:
+          type: string
+          enum:
+          - web
+          - android
+          - ios
+        signPublicKey:
+          type: string
+          description: base64url. ECDSA P-256, dạng uncompressed
+        boxPublicKey:
+          type: string
+          description: base64url. X25519 32 byte
+      required:
+      - name
+      - platform
+      - signPublicKey
+      - boxPublicKey
+    Device:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        platform:
+          type: string
+          enum:
+          - web
+          - android
+          - ios
+        status:
+          type: string
+          enum:
+          - pending
+          - active
+          - revoked
+        signPublicKey:
+          type: string
+          description: base64url, không đệm
+        boxPublicKey:
+          type: string
+          description: base64url, không đệm
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        current:
+          type: boolean
+          description: Thiết bị đang gọi API
+      required:
+      - id
+      - name
+      - platform
+      - status
+      - createdAt
+      - current
+    EmailChallengeRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        purpose:
+          type: string
+          enum:
+          - register
+          - login_new_device
+          - recovery
+          - mfa_reset
+        clientNonce:
+          type: string
+          description: base64url. 32 byte ngẫu nhiên; OTP chỉ hợp lệ với nonce này
+      required:
+      - email
+      - purpose
+      - clientNonce
+    EmailChallengeAccepted:
+      type: object
+      additionalProperties: false
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        expiresIn:
+          type: integer
+          description: giây; mặc định 600
+        resendAfter:
+          type: integer
+          description: giây
+      required:
+      - challengeId
+      - expiresIn
+      - resendAfter
+      description: Luôn trả 202 với cùng cấu trúc dù email có tồn tại hay không (chống dò tài khoản).
+    EmailChallengeVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          pattern: ^[0-9]{8}$
+        clientNonce:
+          type: string
+          description: base64url, không đệm
+      required:
+      - challengeId
+      - code
+      - clientNonce
+    EmailProof:
+      type: object
+      additionalProperties: false
+      properties:
+        emailProof:
+          type: string
+          description: Token một lần, gắn mục đích + clientNonce, hiệu lực 15 phút
+        expiresIn:
+          type: integer
+      required:
+      - emailProof
+      - expiresIn
+    RegisterStartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        emailProof:
+          type: string
+        registrationRequest:
+          type: string
+          description: base64url. OPAQUE RegistrationRequest
+      required:
+      - emailProof
+      - registrationRequest
+    RegisterStartResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        registrationSessionId:
+          type: string
+          format: uuid
+        registrationResponse:
+          type: string
+          description: base64url. OPAQUE RegistrationResponse
+      required:
+      - registrationSessionId
+      - registrationResponse
+    VaultCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        wrappedVaultKey:
+          type: string
+          description: base64url, không đệm
+        encryptedName:
+          type: string
+          description: base64url, không đệm
+          nullable: true
+      required:
+      - id
+      - wrappedVaultKey
+    RegisterFinishRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        registrationSessionId:
+          type: string
+          format: uuid
+        registrationRecord:
+          type: string
+          description: base64url. OPAQUE RegistrationRecord
+        kdfParams:
+          $ref: '#/components/schemas/KdfParams'
+        wrappedRootKey:
+          type: string
+          description: base64url. rootKey bọc bởi KEK
+        recoveryWrappedRootKey:
+          type: string
+          description: base64url. rootKey bọc bởi Recovery Key; bỏ trống nếu người dùng từ chối bộ khôi phục
+          nullable: true
+        vault:
+          $ref: '#/components/schemas/VaultCreate'
+        device:
+          $ref: '#/components/schemas/DeviceRegistration'
+      required:
+      - registrationSessionId
+      - registrationRecord
+      - kdfParams
+      - wrappedRootKey
+      - vault
+      - device
+    Tokens:
+      type: object
+      additionalProperties: false
+      properties:
+        tokenType:
+          type: string
+          enum:
+          - Bearer
+        accessToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: giây; 600
+        refreshToken:
+          type: string
+          description: Chỉ mobile; web dùng cookie __Host- HttpOnly
+          nullable: true
+        deviceId:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          enum:
+          - full
+          - device_approval
+          - recovery
+      required:
+      - tokenType
+      - accessToken
+      - expiresIn
+      - deviceId
+      - scope
+    LoginStartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        startLoginRequest:
+          type: string
+          description: base64url. OPAQUE KE1
+      required:
+      - email
+      - startLoginRequest
+    LoginStartResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        loginSessionId:
+          type: string
+          format: uuid
+        loginResponse:
+          type: string
+          description: base64url. OPAQUE KE2 (bản giả xác định nếu email không tồn tại)
+        kdfParams:
+          $ref: '#/components/schemas/KdfParams'
+      required:
+      - loginSessionId
+      - loginResponse
+      - kdfParams
+    LoginFinishRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        loginSessionId:
+          type: string
+          format: uuid
+        finishLoginRequest:
+          type: string
+          description: base64url. OPAQUE KE3
+        deviceId:
+          type: string
+          format: uuid
+          nullable: true
+        newDevice:
+          allOf:
+          - $ref: '#/components/schemas/DeviceRegistration'
+          nullable: true
+      required:
+      - loginSessionId
+      - finishLoginRequest
+    LoginStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - authenticated
+          - mfa_required
+          - device_approval_required
+          - mfa_verified
+        tokens:
+          allOf:
+          - $ref: '#/components/schemas/Tokens'
+          nullable: true
+        mfaChallengeId:
+          type: string
+          format: uuid
+          nullable: true
+        mfaMethods:
+          type: array
+          items:
+            type: string
+            enum:
+            - totp
+            - webauthn
+            - backup_code
+        webauthnOptions:
+          type: object
+          additionalProperties: true
+          nullable: true
+        approvalId:
+          type: string
+          format: uuid
+          nullable: true
+        pendingToken:
+          type: string
+          description: Token phạm vi hẹp, chỉ dùng cho /devices/approvals/*
+          nullable: true
+        mfaProof:
+          type: string
+          description: Dùng cho luồng khôi phục
+          nullable: true
+      required:
+      - status
+    MfaVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        mfaChallengeId:
+          type: string
+          format: uuid
+        method:
+          type: string
+          enum:
+          - totp
+          - webauthn
+          - backup_code
+        code:
+          type: string
+          nullable: true
+        webauthnAssertion:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+      - mfaChallengeId
+      - method
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refreshToken:
+          type: string
+          description: Chỉ mobile
+          nullable: true
+        deviceId:
+          type: string
+          format: uuid
+      required:
+      - deviceId
+    KeyMaterial:
+      type: object
+      additionalProperties: false
+      properties:
+        kdfParams:
+          $ref: '#/components/schemas/KdfParams'
+        wrappedRootKey:
+          type: string
+          description: base64url, không đệm
+        keyVersion:
+          type: integer
+        hasRecoveryKit:
+          type: boolean
+      required:
+      - kdfParams
+      - wrappedRootKey
+      - keyVersion
+      - hasRecoveryKit
+    Vault:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        wrappedVaultKey:
+          type: string
+          description: base64url, không đệm
+        keyVersion:
+          type: integer
+        encryptedName:
+          type: string
+          description: base64url, không đệm
+          nullable: true
+        changeSeq:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - wrappedVaultKey
+      - keyVersion
+      - changeSeq
+      - createdAt
+    ItemEnvelope:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        vaultId:
+          type: string
+          format: uuid
+        revision:
+          type: integer
+          format: int64
+        changeSeq:
+          type: integer
+          format: int64
+        schemaVersion:
+          type: integer
+        aadVersion:
+          type: integer
+        keyVersion:
+          type: integer
+        wrappedItemKey:
+          type: string
+          description: base64url. 72 byte
+        nonce:
+          type: string
+          description: base64url. 24 byte
+        ciphertext:
+          type: string
+          description: base64url. ≤ 256 KiB + 16 byte tag
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - vaultId
+      - revision
+      - changeSeq
+      - schemaVersion
+      - aadVersion
+      - keyVersion
+      - wrappedItemKey
+      - nonce
+      - ciphertext
+      - updatedAt
+    ItemWrite:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 'Chỉ khi tạo mới: UUIDv4 do client sinh'
+        schemaVersion:
+          type: integer
+          minimum: 1
+        aadVersion:
+          type: integer
+          minimum: 1
+        keyVersion:
+          type: integer
+          minimum: 1
+        wrappedItemKey:
+          type: string
+          minLength: 96
+          maxLength: 96
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: base64url, không đệm
+        nonce:
+          type: string
+          minLength: 32
+          maxLength: 32
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: base64url, không đệm
+        ciphertext:
+          type: string
+          minLength: 23
+          maxLength: 349547
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: base64url, không đệm
+      required:
+      - schemaVersion
+      - aadVersion
+      - keyVersion
+      - wrappedItemKey
+      - nonce
+      - ciphertext
+    ChangesPage:
+      type: object
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+          description: Mờ đục; mã hóa changeSeq
+        hasMore:
+          type: boolean
+        fullResyncRequired:
+          type: boolean
+          description: true nếu cursor cũ hơn thời hạn giữ tombstone
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemEnvelope'
+      required:
+      - cursor
+      - hasMore
+      - fullResyncRequired
+      - items
+    RevisionConflict:
+      allOf:
+      - $ref: '#/components/schemas/ProblemDetails'
+      - type: object
+        properties:
+          currentItem:
+            $ref: '#/components/schemas/ItemEnvelope'
+        required:
+        - currentItem
+    Session:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+        uaFamily:
+          type: string
+          nullable: true
+      required:
+      - id
+      - deviceId
+      - createdAt
+      - expiresAt
+      - current
+    DeviceApprovalCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        requestNonce:
+          type: string
+          description: base64url. 32 byte ngẫu nhiên, nằm trong mã QR của thiết bị mới
+      required:
+      - requestNonce
+    DeviceApproval:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        newDeviceId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - waiting
+          - approved
+          - rejected
+          - expired
+          - cancelled
+        method:
+          type: string
+          enum:
+          - trusted_device
+          - delay
+        notBefore:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        newDeviceSignPublicKey:
+          type: string
+          description: base64url, không đệm
+        newDeviceBoxPublicKey:
+          type: string
+          description: base64url, không đệm
+        requestNonce:
+          type: string
+          description: base64url, không đệm
+        sealedSecretKey:
+          type: string
+          description: base64url. chỉ có khi status=approved
+          nullable: true
+        approverSignature:
+          type: string
+          description: base64url, không đệm
+          nullable: true
+      required:
+      - id
+      - newDeviceId
+      - status
+      - method
+      - notBefore
+      - expiresAt
+      - newDeviceSignPublicKey
+      - newDeviceBoxPublicKey
+      - requestNonce
+    ApprovalDecision:
+      type: object
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+        approverSignature:
+          type: string
+          description: base64url. Chữ ký P-256 trên (approvalId ‖ signPub ‖ boxPub ‖ requestNonce); bắt buộc khi
+            approve
+          nullable: true
+        sealedSecretKey:
+          type: string
+          description: base64url. Secret Key mã hóa tới boxPublicKey của thiết bị mới; bắt buộc khi approve
+          nullable: true
+      required:
+      - decision
+    RecoveryStatus:
+      type: object
+      additionalProperties: false
+      properties:
+        hasRecoveryKit:
+          type: boolean
+        kitVersion:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - hasRecoveryKit
+    RecoveryKitUpload:
+      type: object
+      additionalProperties: false
+      properties:
+        recoveryWrappedRootKey:
+          type: string
+          description: base64url, không đệm
+        kitVersion:
+          type: integer
+      required:
+      - recoveryWrappedRootKey
+      - kitVersion
+    RecoverySessionCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+          - master_password
+          - account_reset
+          - mfa_reset
+        emailProof:
+          type: string
+        mfaProof:
+          type: string
+          nullable: true
+        device:
+          $ref: '#/components/schemas/DeviceRegistration'
+      required:
+      - kind
+      - emailProof
+      - device
+    RecoverySession:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - master_password
+          - account_reset
+          - mfa_reset
+        status:
+          type: string
+          enum:
+          - waiting
+          - ready
+          - completed
+          - cancelled
+          - expired
+        notBefore:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        sessionToken:
+          type: string
+          description: Chỉ trả một lần khi tạo
+          nullable: true
+        recoveryWrappedRootKey:
+          type: string
+          description: base64url. Chỉ trả khi status=ready và kind=master_password
+          nullable: true
+        kdfParams:
+          allOf:
+          - $ref: '#/components/schemas/KdfParams'
+          nullable: true
+      required:
+      - id
+      - kind
+      - status
+      - notBefore
+      - expiresAt
+    RecoveryComplete:
+      type: object
+      additionalProperties: false
+      properties:
+        registrationSessionId:
+          type: string
+          format: uuid
+        registrationRecord:
+          type: string
+          description: base64url, không đệm
+        kdfParams:
+          $ref: '#/components/schemas/KdfParams'
+        wrappedRootKey:
+          type: string
+          description: base64url, không đệm
+        recoveryWrappedRootKey:
+          type: string
+          description: base64url, không đệm
+          nullable: true
+        vault:
+          allOf:
+          - $ref: '#/components/schemas/VaultCreate'
+          nullable: true
+      required:
+      - registrationSessionId
+      - registrationRecord
+      - kdfParams
+      - wrappedRootKey
+    PasswordChangeFinish:
+      type: object
+      additionalProperties: false
+      properties:
+        registrationSessionId:
+          type: string
+          format: uuid
+        registrationRecord:
+          type: string
+          description: base64url, không đệm
+        kdfParams:
+          $ref: '#/components/schemas/KdfParams'
+        wrappedRootKey:
+          type: string
+          description: base64url, không đệm
+        recoveryWrappedRootKey:
+          type: string
+          description: base64url, không đệm
+          nullable: true
+      required:
+      - registrationSessionId
+      - registrationRecord
+      - kdfParams
+      - wrappedRootKey
+    RegistrationStartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        registrationRequest:
+          type: string
+          description: base64url, không đệm
+      required:
+      - registrationRequest
+    MfaMethod:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - totp
+          - webauthn
+        label:
+          type: string
+          nullable: true
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - kind
+      - createdAt
+    MfaEnrollRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+          - totp
+          - webauthn
+        label:
+          type: string
+          maxLength: 64
+          nullable: true
+      required:
+      - kind
+    MfaEnrollResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        totpProvisioningUri:
+          type: string
+          nullable: true
+        webauthnCreationOptions:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+      - id
+    MfaConfirmRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          nullable: true
+        webauthnAttestation:
+          type: object
+          additionalProperties: true
+          nullable: true
+    BackupCodes:
+      type: object
+      additionalProperties: false
+      properties:
+        codes:
+          type: array
+          items:
+            type: string
+      required:
+      - codes
+    SecurityEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        deviceId:
+          type: string
+          format: uuid
+          nullable: true
+        uaFamily:
+          type: string
+          nullable: true
+        coarseLocation:
+          type: string
+          description: Quốc gia/vùng, không phải địa chỉ IP
+          nullable: true
+      required:
+      - id
+      - eventType
+      - occurredAt
+    SecurityEventPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityEvent'
+        nextCursor:
+          type: string
+          nullable: true
+      required:
+      - items
+    AttachmentInit:
+      type: object
+      additionalProperties: false
+      properties:
+        itemId:
+          type: string
+          format: uuid
+        ciphertextSize:
+          type: integer
+          minimum: 0
+          maximum: 11534336
+        wrappedFileKey:
+          type: string
+          description: base64url, không đệm
+        encryptedMetadata:
+          type: string
+          description: base64url, không đệm
+        chunkSize:
+          type: integer
+          default: 1048576
+      required:
+      - itemId
+      - ciphertextSize
+      - wrappedFileKey
+      - encryptedMetadata
+    AttachmentIntent:
+      type: object
+      additionalProperties: false
+      properties:
+        attachmentId:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum:
+          - PUT
+          - GET
+        expiresIn:
+          type: integer
+          description: giây; ≤ 300
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - attachmentId
+      - url
+      - method
+      - expiresIn
+    AttachmentComplete:
+      type: object
+      additionalProperties: false
+      properties:
+        ciphertextSha256:
+          type: string
+          description: base64url. SHA-256 của toàn bộ bản mã đã tải lên
+      required:
+      - ciphertextSha256
+    AttachmentMeta:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        wrappedFileKey:
+          type: string
+          description: base64url, không đệm
+        encryptedMetadata:
+          type: string
+          description: base64url, không đệm
+        ciphertextSize:
+          type: integer
+          format: int64
+        chunkSize:
+          type: integer
+        state:
+          type: string
+          enum:
+          - pending
+          - uploaded
+          - deleted
+      required:
+      - id
+      - itemId
+      - wrappedFileKey
+      - encryptedMetadata
+      - ciphertextSize
+      - chunkSize
+      - state
+    DeletionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        emailProof:
+          type: string
+          nullable: true
+    DeletionScheduled:
+      type: object
+      additionalProperties: false
+      properties:
+        effectiveAt:
+          type: string
+          format: date-time
+      required:
+      - effectiveAt

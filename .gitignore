@@ -1,4 +1,5 @@
 node_modules/
+services/api/dist/
 .next/
 data/
 .test-data/
