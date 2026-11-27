@@ -93,4 +93,5 @@ jobs:
       - name: Attest SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
+          subject-path: dist/ksv-next-build.tar.gz
           sbom-path: dist/ksv-sbom.cdx.json
