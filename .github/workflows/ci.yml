@@ -61,16 +61,20 @@ jobs:
         run: npm run check
 
       - name: Install backend dependencies
-        run: npm ci --prefix services/api --ignore-scripts
+        run: npm ci --ignore-scripts
+        working-directory: services/api
 
       - name: Audit backend dependencies
-        run: npm audit --prefix services/api --audit-level=high
+        run: npm audit --audit-level=high
+        working-directory: services/api
 
       - name: Apply PostgreSQL migrations
-        run: npm run migrate --prefix services/api
+        run: npm run migrate
+        working-directory: services/api
 
       - name: Check backend and PostgreSQL isolation
-        run: npm run check --prefix services/api
+        run: npm run check
+        working-directory: services/api
 
   attest:
     name: Build, generate SBOM, and attest
