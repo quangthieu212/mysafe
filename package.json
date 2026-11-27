@@ -1,0 +1,33 @@
+{
+  "name": "ket-sat-viet",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "test": "tsx --test tests/crypto.test.ts tests/vault.test.ts",
+    "test:integration": "npm run build && tsx --test tests/api.integration.test.ts",
+    "test:e2e": "npm run build && playwright test",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && npm run test:integration"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "dependencies": {
+    "hash-wasm": "4.12.0",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

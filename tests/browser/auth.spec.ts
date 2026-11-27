@@ -1,0 +1,44 @@
+import { expect, test } from '@playwright/test';
+
+test('register, logout, login, unlock, reload and recover the vault', async ({ page }) => {
+  const email = `browser-${crypto.randomUUID()}@example.test`;
+  const loginPassword = 'test-account-password';
+  const masterPassword = 'test-vault-password';
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Tạo két mới', exact: false }).click();
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Mật khẩu đăng nhập').fill(loginPassword);
+  await page.getByLabel('Mật khẩu chính').fill(masterPassword);
+  const recovery = await page.locator('.recovery-notice code').innerText();
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Tạo két an toàn', exact: false }).click();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  await page.getByRole('button', { name: 'Đăng xuất', exact: false }).click();
+  await page.locator('.mode-switch').getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Mật khẩu đăng nhập').fill(loginPassword);
+  await page.locator('form').getByRole('button', { name: 'Đăng nhập', exact: false }).click();
+  await expect(page.getByLabel('Mật khẩu chính')).toBeVisible();
+  await expect(page.locator('.form-error')).toHaveCount(0);
+  await expect(page.getByLabel('Mật khẩu đăng nhập')).toHaveCount(0);
+  let loginRequests = 0;
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/account')) loginRequests++;
+  });
+  await page.getByLabel('Mật khẩu chính').fill('wrong-master-password');
+  await page.getByRole('button', { name: 'Mở két', exact: false }).click();
+  await expect(page.locator('.form-error')).toBeVisible();
+  await page.getByLabel('Mật khẩu chính').fill(masterPassword);
+  await page.getByRole('button', { name: 'Mở két', exact: false }).click();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Mật khẩu chính')).toBeVisible();
+  await page.getByRole('button', { name: 'Mã khôi phục', exact: false }).click();
+  await page.getByLabel('Mã khôi phục').fill(recovery);
+  await page.getByRole('button', { name: 'Mở két', exact: false }).click();
+  await expect(page.locator('.app-shell')).toBeVisible();
+  expect(loginRequests).toBe(0);
+  expect(errors).toEqual([]);
+});
